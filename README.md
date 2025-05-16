@@ -1,10 +1,10 @@
 # LLM-baselines
 
-A modular codebase to experiment with transformers, inspired by NanoGPT. 
+A modular codebase to experiment with transformers, inspired by NanoGPT.
 
-## Quickstart 
+## Quickstart
 
-Install dependencies: 
+Install dependencies:
 
 ```
 pip install -r requirements.txt
@@ -25,7 +25,6 @@ This training takes roughly ~3h on a single A100 (80GB) GPU. The plot of the tra
 
 You can check out the wandb run for yourself [here](https://wandb.ai/haeggee/llm-lauzhack/runs/lm2obqy9?nw=nwuserhaeggee).
 
-
 ## Less quick start
 
 Here are the possible parameters you can use (copypasted from `config/base.py`):
@@ -38,7 +37,7 @@ parser.add_argument('--seed', default=0, type=int) # random seed for the paramet
 parser.add_argument('--data_seed', default=1337, type=int) # random seed defining the data ordering
 parser.add_argument('--device', default='cuda:0', type=str) # see below to run on multiple GPUs
 parser.add_argument('--iterations', default=25000, type=int) # total number of training iterations
-parser.add_argument('--lr', default=1e-3, type=float) 
+parser.add_argument('--lr', default=1e-3, type=float)
 parser.add_argument('--warmup_percent', default=0.05, type=float) # the total number of warmup steps is iterations * warmup_percent
 parser.add_argument('--weight_decay', default=0.1, type=float) # I recommend you keep this value, else instabilities might arise
 parser.add_argument('--beta1', default=0.9, type=float) # adam parameter
@@ -51,18 +50,18 @@ parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1
 # Dataset params
 parser.add_argument('--dataset', default='slimpajama', choices=['slimpajama', 'wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2'])
 parser.add_argument('--vocab_size', default=50304, type=int)
-parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, you most likely do not need this  
+parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, you most likely do not need this
 # Model params
 parser.add_argument('--model', default='base', choices=['base', 'llama2'])
 parser.add_argument('--use_pretrained', default="none", type=str) # 'none', 'gpt-2' or a path to the pretraind model
 parser.add_argument('--dropout', default=0.0, type=float) # keep to 0 unless in low data regime (e.g. wikitext)
 parser.add_argument('--n_head', default=12, type=int)
 parser.add_argument('--n_layer', default=12, type=int) # depth in (att + ff) blocks
-parser.add_argument('--n_embd', default=768, type=int) # hidden size ... 
+parser.add_argument('--n_embd', default=768, type=int) # hidden size ...
 parser.add_argument('--sequence_length', default=512, type=int)
 parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
 parser.add_argument('--bias', default=False, type=bool)
-parser.add_argument('--compile', action='store_true') # if true then model is compiled 
+parser.add_argument('--compile', action='store_true') # if true then model is compiled
 parser.add_argument('--rmsnorm_eps', default=1e-5, type=float) # used by the llama model
 parser.add_argument('--multiple_of', default=256, type=int) # used by the llama model make SwiGLU hidden layer size multiple of large power of 2
 # logging params (WandB)
@@ -87,9 +86,9 @@ export WANDB_API_KEY="put your authorize key here, to find it: https://wandb.ai/
 python ./src/main.py --config_format base --wandb --wandb_project "my awesome project" --n_layer 7 --model base --seed 123
 ```
 
-## How to add your own transformer architecture? 
+## How to add your own transformer architecture?
 
-The structure of the project is the following: 
+The structure of the project is the following:
 
 ```sh
 src/
@@ -115,7 +114,7 @@ src/
         # code to enable simple distributed training
 ```
 
-Given the above structure, to add your own model, you can just fork the `./src/models/base.py` file, do your modifications, then if necessary fork the `./src/optim/base.py` in case you need some custom training loop or evaluation. You also need to fork the `./src/config/base.py` file to add your own parameters, which imply adding your new config to the mapping `CONFIG_FORMAT_TO_MODULE_MAP` in `./src/config/__init__.py`. To add a new dataset, create a new file in the `data` folder, check `wikitext.py` for the expected format. 
+Given the above structure, to add your own model, you can just fork the `./src/models/base.py` file, do your modifications, then if necessary fork the `./src/optim/base.py` in case you need some custom training loop or evaluation. You also need to fork the `./src/config/base.py` file to add your own parameters, which imply adding your new config to the mapping `CONFIG_FORMAT_TO_MODULE_MAP` in `./src/config/__init__.py`. To add a new dataset, create a new file in the `data` folder, check `wikitext.py` for the expected format.
 
 ## Multi-GPU training
 
@@ -125,12 +124,85 @@ Given a multi-GPU machine with e.g. 4 GPUs, one can distribute the training usin
 torchrun --nproc_per_node=4 ./src/main.py --config_format base --distributed_backend nccl --dataset slimpajama --model base
 ```
 
-When using multiple GPUs, the data will be distributed among the GPUs by dividing the number of accumulation steps by the number of nodes. For instance if we train with a batch size of 32 and 4 accumulation steps, then each GPU will process batches of 32 elements and do 1 accumulation steps. For this reason we require `acc_steps` to be a multiple of the number of GPUs.    
-
+When using multiple GPUs, the data will be distributed among the GPUs by dividing the number of accumulation steps by the number of nodes. For instance if we train with a batch size of 32 and 4 accumulation steps, then each GPU will process batches of 32 elements and do 1 accumulation steps. For this reason we require `acc_steps` to be a multiple of the number of GPUs.
 
 ## Experimenting locally on your device with CPU
+
 If do not have access to a GPU or just want to try the code locally on your device, you can try the Shakespeare dataset with character-level tokens:
 
 ```sh
 python ./src/main.py --n_layer=2 --n_head=4 --n_embd=128 --sequence_length=256 --dataset=shakespeare-char --device=cpu --vocab_size=96
 ```
+
+## LLM Baselines with MoE (Mixture of Experts)
+
+This repository contains implementations of various LLM models enhanced with Mixture of Experts (MoE) architectures. The goal of this project is to demonstrate how MoE can improve model efficiency and performance in language tasks.
+
+### Project Structure
+
+-   `src/models/` - Model implementations
+    -   `moe.py` - Basic MoE implementation
+    -   `moe_transformer.py` - Transformer model with MoE layers
+-   `src/train_moe.py` - Training script for simple MoE model
+-   `src/train_moe_transformer.py` - Training script for transformer MoE model
+-   `src/evaluate_mathqa.py` - Evaluation script for MathQA dataset
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/zak-2213/llm-baselines.git
+cd llm-baselines
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install the package in development mode
+pip install -e .
+```
+
+### Training
+
+#### Simple MoE Model
+
+To train a simple MoE model on a classification task:
+
+```bash
+python src/train_moe.py --num_experts 8 --top_k 2 --hidden_size 512 --epochs 10
+```
+
+#### Transformer with MoE
+
+To train a transformer model with MoE layers:
+
+```bash
+python src/train_moe_transformer.py --num_experts 8 --top_k 2 --n_layer 6 --n_head 8 --n_embd 512
+```
+
+### Evaluation on MathQA
+
+This repository now includes support for evaluating models on the MathQA dataset, which tests mathematical reasoning abilities.
+
+#### About MathQA
+
+MathQA is a large-scale dataset of math word problems with step-by-step rationales. The dataset contains over 37,000 problems covering various math domains and difficulty levels. Each example includes:
+
+-   A math problem statement
+-   The correct answer
+-   A step-by-step rationale for solving the problem
+
+#### Running Evaluation
+
+To evaluate your trained MoE model on MathQA:
+
+```bash
+python src/evaluate_mathqa.py --model_path /path/to/your/model.pth --model_type transformer
+```
+
+Additional options:
+
+-   `--dataset_name`: HuggingFace dataset name (default: "miike-ai/mathqa")
+-   `--num_experts`: Number of experts to use
+-   `--top_k`: Number of experts to select per token
+-   `--batch_size`: Batch size for evaluation
+-   `--max_examples`: Maximum number of examples to evaluate (useful for quick testing)
