@@ -117,58 +117,57 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
         itr += 1
 
         if itr % 20 == 0 or itr == iterations: # from here it's only evaluation code, all the training is above
-            if distributed_backend.is_master_process():
-                t1 = time.time()
-                dt = t1 - t0
-                epoch = substep//num_substeps_per_epoch
+            t1 = time.time()
+            dt = t1 - t0
+            epoch = substep//num_substeps_per_epoch
 
-                model.eval()
-                train_loss = loss.detach().cpu().item() * acc_steps
-                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
-                
-                eval_steps = (
-                    24 if itr < iterations else len(data["val"])
+            model.eval()
+            train_loss = loss.detach().cpu().item() * acc_steps
+            current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
+            
+            eval_steps = (
+                24 if itr < iterations else len(data["val"])
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            if itr % eval_freq == 0:
+                val_acc, val_loss, val_perplexity = eval(
+                    model,
+                    data_val_iter,
+                    extra_args.device,
+                    max_num_batches=eval_steps,
+                    ctx=type_ctx,
                 )
+                print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f} [val] loss={val_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
                 
-                elapsed_time = time.time() - start_time
                 
-                if itr % eval_freq:
-                    val_acc, val_loss, val_perplexity = eval(
-                        model,
-                        data_val_iter,
-                        extra_args.device,
-                        max_num_batches=eval_steps,
-                        ctx=type_ctx,
-                    )
-                    print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f} [val] loss={val_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
-                    
-                    
-                    if extra_args.wandb:
-                        logs = {
-                            "iter": itr,
-                            "train/loss": train_loss,
-                            "val/loss": val_loss,
-                            "val/perplexity": val_perplexity,
-                            "val/acc": val_acc,
-                            "lr": current_lr,
-                        }
+                if extra_args.wandb:
+                    logs = {
+                        "iter": itr,
+                        "train/loss": train_loss,
+                        "val/loss": val_loss,
+                        "val/perplexity": val_perplexity,
+                        "val/acc": val_acc,
+                        "lr": current_lr,
+                    }
     
-                        if itr == iterations:
-                            logs["val/final-ppl"] = val_perplexity
-                            logs["val/final-acc"] = val_acc
-                            logs["val/final-loss"] = val_loss
+                    if itr == iterations:
+                        logs["val/final-ppl"] = val_perplexity
+                        logs["val/final-acc"] = val_acc
+                        logs["val/final-loss"] = val_loss
     
-                        wandb.log(logs)
+                    wandb.log(logs)
     
-                        if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
-                            if text_table is None:
-                                text_table = wandb.Table(columns=["itr", "val-pp", "text"])
+                    if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
+                        if text_table is None:
+                            text_table = wandb.Table(columns=["itr", "val-pp", "text"])
     
-                            out_str = distributed_backend.get_raw_model(model).generate_from_string(
-                                extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
-                            text_table.add_data(itr, val_perplexity, out_str)
-                            # why a copy? see github.com/wandb/wandb/issues/2981
-                            wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
+                        out_str = distributed_backend.get_raw_model(model).generate_from_string(
+                            extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
+                        text_table.add_data(itr, val_perplexity, out_str)
+                        # why a copy? see github.com/wandb/wandb/issues/2981
+                        wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
                 else:
                     print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f}"
 
@@ -182,29 +181,27 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
 
                 model.train()
                 t0 = time.time()
-        if distributed_backend.is_master_process():
-            if extra_args.save_checkpoint_freq is not None and itr % extra_args.save_checkpoint_freq == 0:
-                print(f"saving checkpoint to {os.path.dirname(ckpt_path)}/ckpt_{itr}.pt")
-                save_checkpoint(distributed_backend=distributed_backend,
-                                model=model,
-                                opt=opt,
-                                scheduler=scheduler,
-                                itr=itr,
-                                cpu_rng_state=torch.get_rng_state(),
-                                gpu_rng_state=torch.cuda.get_rng_state(),
-                                numpy_rng_state=np.random.get_state(),
-                                py_rng_state=random.getstate(),
-                                train_sampler_state=sampler_state_before_iter,
-                                ckpt_path=os.path.join(os.path.dirname(ckpt_path), f"ckpt_{itr}.pt"))
-                
-    if distributed_backend.is_master_process():
-        print(f"saving checkpoint to {ckpt_path}")
-        save_checkpoint(distributed_backend=distributed_backend,
-                        model=model,
-                        opt=opt,
-                        scheduler=scheduler,
-                        itr=itr,
-                        ckpt_path=ckpt_path)
+        if extra_args.save_checkpoint_freq is not None and itr % extra_args.save_checkpoint_freq == 0:
+            print(f"saving checkpoint to {os.path.dirname(ckpt_path)}/ckpt_{itr}.pt")
+            save_checkpoint(distributed_backend=distributed_backend,
+                            model=model,
+                            opt=opt,
+                            scheduler=scheduler,
+                            itr=itr,
+                            cpu_rng_state=torch.get_rng_state(),
+                            gpu_rng_state=torch.cuda.get_rng_state(),
+                            numpy_rng_state=np.random.get_state(),
+                            py_rng_state=random.getstate(),
+                            train_sampler_state=sampler_state_before_iter,
+                            ckpt_path=os.path.join(os.path.dirname(ckpt_path), f"ckpt_{itr}.pt"))
+            
+    print(f"saving checkpoint to {ckpt_path}")
+    save_checkpoint(distributed_backend=distributed_backend,
+                    model=model,
+                    opt=opt,
+                    scheduler=scheduler,
+                    itr=itr,
+                    ckpt_path=ckpt_path)
         
     if elapsed_time >= 12600:
 
