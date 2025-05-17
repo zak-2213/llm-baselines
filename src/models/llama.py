@@ -92,7 +92,14 @@ class LlamaAttention(CausalSelfAttention):
         super().__init__(config)
         self.config = config
         # self.rpe = torchtune.modules.RotaryPositionalEmbeddings(config.n_embd//config.n_head, config.sequence_length)
-        
+        if getattr(config, 'use_gqa', False):
+            self.num_key_value_heads = config.num_key_value_heads
+            # IMPORTANT: head_dim is based on n_head (Q's heads) for RoPE compatibility
+            self.gqa_head_dim = config.n_embd // config.n_head
+
+            self.q_proj_gqa = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+            self.k_proj_gqa = nn.Linear(config.n_embd, self.num_key_value_heads * self.gqa_head_dim, bias=config.bias)
+            self.v_proj_gqa = nn.Linear(config.n_embd, self.num_key_value_heads * self.gqa_head_dim, bias=config.bias)
     def forward(self, x, freqs_cis):
         # batch size, sequence length, embedding dimensionality (n_embd)
         (
@@ -102,19 +109,44 @@ class LlamaAttention(CausalSelfAttention):
         ) = x.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.config.n_embd, dim=2)
-        # (B, T, nh, hs)
-        k = k.view(B, T, self.n_head, C // self.n_head)
-        q = q.view(B, T, self.n_head, C // self.n_head)
+        query_head_dim = C // self.n_head
+        if getattr(self.config, 'use_gqa', False):
+            num_kv_heads = self.num_key_value_heads  # from LlamaAttention.__init__
 
-        q, k = apply_rotary_emb(q, k, freqs_cis)
-        # q = self.rpe(q)
-        # k = self.rpe(k)
-        # (B, nh, T, hs)
-        q, k = q.transpose(1, 2), k.transpose(1, 2)
+            q = self.q_proj_gqa(x)
+            k = self.k_proj_gqa(x)
+            v = self.v_proj_gqa(x)
 
-        # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            # q shape: (B, T, n_head, query_head_dim)
+            q = q.view(B, T, self.n_head, query_head_dim)
+            # k, v shape: (B, T, num_kv_heads, query_head_dim) - use query_head_dim
+            k = k.view(B, T, num_kv_heads, query_head_dim)
+            v = v.view(B, T, num_kv_heads, query_head_dim)
+
+            q, k = apply_rotary_emb(q, k, freqs_cis)
+            # q = self.rpe(q)
+            # k = self.rpe(k)
+            # (B, nh, T, hs)
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+            # (B, nh, T, hs)
+            v = v.transpose(1, 2)
+            if num_kv_heads != self.n_head:
+                repeat_factor = self.n_head // num_kv_heads
+                k = k.repeat_interleave(repeat_factor, dim=1)
+                v = v.repeat_interleave(repeat_factor, dim=1)
+            else:  # Standard MHA path
+                # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+                q, k, v = self.c_attn(x).split(self.n_embd, dim=2)  # c_attn from CausalSelfAttention
+    
+                # (B, T, nh, hs) where hs = query_head_dim
+                k = k.view(B, T, self.n_head, query_head_dim)
+                q = q.view(B, T, self.n_head, query_head_dim)
+                v = v.view(B, T, self.n_head, query_head_dim)  # v also uses query_head_dim
+    
+                q, k = apply_rotary_emb(q, k, freqs_cis)
+                # (B, nh, T, hs)
+                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
