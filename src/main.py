@@ -39,6 +39,7 @@ def main(args):
         torch.cuda.set_device(args.device)
 
     torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     
@@ -97,9 +98,9 @@ def main(args):
         if distributed_backend.is_master_process():
             os.makedirs(ckpt_path)
         distributed_backend.sync()
-    elif os.path.isfile(os.path.join(ckpt_path, "summary.json")): # the experiment was already completed
-        print(f"Already found experiment '{ckpt_path}'.\nSkipping.")
-        sys.exit(0)
+    # elif os.path.isfile(os.path.join(ckpt_path, "summary.json")): # the experiment was already completed
+    #     print(f"Already found experiment '{ckpt_path}'.\nSkipping.")
+    #     sys.exit(0)
 
     itr = 0
     rng_state_dict = None

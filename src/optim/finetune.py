@@ -17,133 +17,142 @@ from data.utils import Dataset, get_dataloader
 
 import transformers
 
-##################################################
-# (Optional) If you want to see an initial generation.
-def initial_generation(model, prompt):
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
-    tokenizer.pad_token = tokenizer.eos_token
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    outputs = model.generate(input_ids=inputs["input_ids"], max_new_tokens=140)
-    gen_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-    print("Initial generation:")
-    print(gen_text)
-##################################################
+class FinetuneDataset(torch.utils.data.Dataset):
+    def __init__(self, data, sequence_length):
+        """
+        data: a torch.Tensor or a NumPy array of token IDs.
+        sequence_length: the fixed sequence length for each example.
+        """
+        self.data = data
+        self.sequence_length = sequence_length
 
-# Switch the model to training mode (model is assumed to be created via get_model)
-# For illustration, we assume the model is already created and assigned to "model".
-# (In practice, you may load your model using your get_model from models/utils.py)
-# For example:
-#   from models.utils import get_model
-#   dummy_args = ...  # fill in dummy hyperparameters as needed
-#   model = get_model(dummy_args)
-#   if checkpoint is not None: model.load_state_dict(torch.load(checkpoint))
-# Here we assume that has been done.
+    def __len__(self):
+        total_length = len(self.data)
+        return (total_length - 1) // self.sequence_length
 
-model.train()
-model.gradient_checkpointing_enable()
+    def __getitem__(self, idx):
+        start = idx * self.sequence_length
+        end = start + self.sequence_length
+        if isinstance(self.data, torch.Tensor):
+            input_ids = self.data[start:end].long()
+            labels = self.data[start + 1 : end + 1].long()
+        else:
+            input_ids = torch.from_numpy(self.data[start:end]).long()
+            labels = torch.from_numpy(self.data[start + 1 : end + 1]).long()
+        return {"input_ids": input_ids, "labels": labels}
 
-# Prepare the model for k-bit/quantized training and wrap it with LoRA.
-model = prepare_model_for_kbit_training(model)
-lora_config = LoraConfig(
-    r=8,
-    lora_alpha=32,
-    target_modules=["q_proj"],  # update as needed
-    lora_dropout=0.05,
-    bias="none",
-    task_type="CAUSAL_LM"
-)
-model = get_peft_model(model, lora_config)
-model.print_trainable_parameters()
-
-# Load the MathQA dataset using your benchmarks.
-# (We use the torch return type so that further processing is easier.)
-# Note: get_mathqa returns a dict with keys: "train", "val", "train_len", "val_len"
-mathqa_data = get_mathqa(num_proc=1, return_torch=True, pad_to_multiple=1024)
-
-# Define a custom callback that evaluates on MathQA at the end of each epoch.
-class MathQAEvalCallback(TrainerCallback):
-    def on_epoch_end(self, args, state, control, **kwargs):
-        model = kwargs["model"]
-        device = args.device
-        # Set model to evaluation.
-        model.eval()
-        # Create a Torch dataset from the MathQA validation tokens.
-        # We use the Dataset class from data/utils.py.
-        sequence_length = args.sequence_length if hasattr(args, "sequence_length") else 1024
-        val_dataset = Dataset(mathqa_data["val"], sequence_length)
-        # Use your helper to build a dataloader.
-        eval_loader, _ = get_dataloader(val_dataset, sequence_length, batch_size=args.per_device_eval_batch_size, seed=args.seed)
+def simple_collate_fn(features):
+    # features is a list of dicts containing "input_ids" and "labels" of equal length.
+    input_ids = torch.stack([f["input_ids"] for f in features])
+    labels = torch.stack([f["labels"] for f in features])
+    return {"input_ids": input_ids, "labels": labels}
+    
+def run_finetune(model, checkpoint=None):
+    """
+    Finetunes the model on MathQA.
+      If a checkpoint path is provided, it is loaded into the model before finetuning.
+    """
+    # (Assume that the model is created externally and available in this module’s scope.)
+    # For example, you might call your own `get_model` function here.
+    # For this example, we assume that `model` is already defined (e.g. via an earlier import or creation).
+    if checkpoint is not None:
+        print(f"Loading checkpoint from {checkpoint}")
+        ckpt = torch.load(checkpoint, map_location="cpu")
+        model.load_state_dict(ckpt)
+    
+    model.train()
+    
+    if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+    else:
+        print(f"{model.__class__.__name__} does not support gradient_checkpointing_enable().")
         
-        total_loss = 0.0
-        count = 0
-        # Disable gradient tracking.
-        with torch.no_grad():
-            for batch in eval_loader:
-                x, y = batch  # x, y are torch tensors.
-                # Forward pass; note that our model returns a dict with a "loss" key.
-                outputs = model(x.to(device), targets=y.to(device))
-                loss = outputs.get("loss", None)
-                if loss is not None:
-                    total_loss += loss.item()
-                    count += 1
-        avg_loss = total_loss / count if count > 0 else float('inf')
-        perplexity = math.exp(avg_loss)
-        print(f"\n=== Epoch {state.epoch} MathQA Evaluation ===")
-        print(f"Validation Loss: {avg_loss:.4f} | Perplexity: {perplexity:.2f}\n")
-        # Return control to Trainer.
-        model.train()
-        return control
+    model = prepare_model_for_kbit_training(model)
+    lora_config = LoraConfig(
+        r=8,
+        lora_alpha=32,
+        target_modules=["c_attn"],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM"
+    )
+    
+    if not hasattr(model.config, "get"):
+            model.config = model.config.__dict__
+            
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    
+    mathqa_data = get_mathqa(num_proc=1, return_torch=True, pad_to_multiple=1024)
+    
+    # (The MathQA evaluation callback remains unchanged.)
+    class MathQAEvalCallback(TrainerCallback):
+        def on_epoch_end(self, args, state, control, **kwargs):
+            model = kwargs["model"]
+            device = args.device
+            model.eval()
+            sequence_length = args.sequence_length if hasattr(args, "sequence_length") else 1024
+            val_dataset = Dataset(mathqa_data["val"], sequence_length)
+            eval_loader, _ = get_dataloader(val_dataset, sequence_length, batch_size=args.per_device_eval_batch_size, seed=args.seed)
+            
+            total_loss = 0.0
+            count = 0
+            with torch.no_grad():
+                for batch in eval_loader:
+                    x, y = batch
+                    outputs = model(x.to(device), targets=y.to(device))
+                    loss = outputs.get("loss", None)
+                    if loss is not None:
+                        total_loss += loss.item()
+                        count += 1
+            avg_loss = total_loss / count if count > 0 else float('inf')
+            perplexity = math.exp(avg_loss)
+            print(f"\n=== Epoch {state.epoch} MathQA Evaluation ===")
+            print(f"Validation Loss: {avg_loss:.4f} | Perplexity: {perplexity:.2f}\n")
+            model.train()
+            return control
 
-##################################################
-# Set up a Hugging Face tokenizer (we use GPT-2 here).
-hf_tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
-hf_tokenizer.pad_token = hf_tokenizer.eos_token
-
-# Create a data collator for language modeling.
-data_collator = DataCollatorForLanguageModeling(tokenizer=hf_tokenizer, mlm=False)
-
-# For finetuning on MathQA via benchmarks, we need a dummy train dataset.
-# (Here, we use the train split from mathqa_data to simulate training data.)
-train_dataset = Dataset(mathqa_data["train"], sequence_length=1024)
-
-# Define training hyperparameters.
-training_args = TrainingArguments(
-    output_dir="finetuned_mathqa",
-    learning_rate=2e-4,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
-    num_train_epochs=10,
-    weight_decay=0.01,
-    logging_strategy="epoch",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    gradient_accumulation_steps=4,
-    warmup_steps=2,
-    fp16=True,
-    optim="paged_adamw_8bit",
-    seed=42,
-    # Make sure to set the sequence length in args if needed by the eval callback.
-    sequence_length=1024,
-)
-
-# Optionally, show an initial generation before finetuning.
-initial_generation(model, "Problem: Solve 2+2 = ? Answer:")
-
-# Create Trainer with our MathQA evaluation callback.
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=train_dataset,  # you can provide a separate evaluation dataset if available
-    data_collator=data_collator,
-    callbacks=[MathQAEvalCallback]
-)
-
-# Disable the cache for training (to silence any warnings).
-model.config.use_cache = False
-trainer.train()
-model.config.use_cache = True
-
-# Save the finetuned model.
-trainer.save_model("finetuned_mathqa")
+    hf_tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+    hf_tokenizer.pad_token = hf_tokenizer.eos_token
+    # Instead of using DataCollatorForLanguageModeling, we use our simple collate function.
+    data_collator = simple_collate_fn
+    train_dataset = FinetuneDataset(mathqa_data["train"], sequence_length=1024)
+    
+    training_args = TrainingArguments(
+        output_dir="finetuned_mathqa",
+        learning_rate=2e-4,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
+        num_train_epochs=10,
+        weight_decay=0.01,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        logging_steps=1,
+        load_best_model_at_end=True,
+        gradient_accumulation_steps=4,
+        warmup_steps=2,
+        fp16=True,
+        optim="paged_adamw_8bit",
+        seed=1337,
+    )    
+    # initial_generation(model, "Problem: Solve 2+2 = ? Answer:")
+    
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=train_dataset,
+        data_collator=data_collator,
+        callbacks=[MathQAEvalCallback]
+    )
+    
+    # model.config.use_cache = False
+    trainer.train()
+    # model.config.use_cache = True
+    trainer.save_model("finetuned_mathqa")
+    
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint to load")
+    args = parser.parse_args()
+    run_finetune(checkpoint=args.checkpoint)

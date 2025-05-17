@@ -269,7 +269,10 @@ class GPTBase(nn.Module):
             {"params": sorted(list(decay))},
             {"params": sorted(list(no_decay)), "weight_decay": 0.0},
         ]
-
+        
+    @torch.no_grad()
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        return {"input_ids": input_ids}
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):

@@ -7,7 +7,6 @@ from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 import transformers
 import tiktoken
-from src.data.benchmarks import get_mathqa
 
 import torch
 import torch.nn.functional as F
@@ -86,8 +85,8 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
         get_batch(data_train_iter, device=extra_args.device)
 
     
-    while itr < iterations:
-            
+    # while itr < iterations:
+    while False: 
         for microstep_idx in range(acc_steps):  # gradient accumulation
             x, y = get_batch(data_train_iter, device=extra_args.device)
             
@@ -196,107 +195,112 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
                             train_sampler_state=sampler_state_before_iter,
                             ckpt_path=os.path.join(os.path.dirname(ckpt_path), f"ckpt_{itr}.pt"))
             
-    print(f"saving checkpoint to {ckpt_path}")
-    save_checkpoint(distributed_backend=distributed_backend,
-                    model=model,
-                    opt=opt,
-                    scheduler=scheduler,
-                    itr=itr,
-                    ckpt_path=ckpt_path)
-        
-    if elapsed_time >= 12600:
+    # print(f"saving checkpoint to {ckpt_path}")
+    # save_checkpoint(distributed_backend=distributed_backend,
+    #                 model=model,
+    #                 opt=opt,
+    #                 scheduler=scheduler,
+    #                 itr=itr,
+    #                 ckpt_path=ckpt_path)
+    
+    from optim.finetune import run_finetune
+    print("Pretraining complete. Calling finetuning function...")
+    # run_finetune(checkpoint=ckpt_path)
+    run_finetune(model)
+               
+    # if elapsed_time >= 12600:
 
-            tokenizer = tiktoken.get_encoding("gpt2")
-            model.train() # model in training mode (dropout modules are activated)
+    #         tokenizer = tiktoken.get_encoding("gpt2")
+    #         model.train() # model in training mode (dropout modules are activated)
 
-            # enable gradient check pointing
-            model.gradient_checkpointing_enable()
+    #         # enable gradient check pointing
+    #         model.gradient_checkpointing_enable()
 
-            # enable quantized training
-            model = prepare_model_for_kbit_training(model)
+    #         # enable quantized training
+    #         model = prepare_model_for_kbit_training(model)
 
-            # LoRA config
-            config = LoraConfig(
-                r=8,
-                lora_alpha=32,
-                target_modules=["q_proj"],
-                lora_dropout=0.05,
-                bias="none",
-                task_type="CAUSAL_LM"
-            )
+    #         # LoRA config
+    #         config = LoraConfig(
+    #             r=8,
+    #             lora_alpha=32,
+    #             target_modules=["q_proj"],
+    #             lora_dropout=0.05,
+    #             bias="none",
+    #             task_type="CAUSAL_LM"
+    #         )
 
-            # LoRA trainable version of model
-            model = get_peft_model(model, config)
+    #         # LoRA trainable version of model
+    #         model = get_peft_model(model, config)
 
-            # trainable parameter count
-            model.print_trainable_parameters()
+    #         # trainable parameter count
+    #         model.print_trainable_parameters()
 
-            data = get_mathqa()
+    #         data = get_mathqa()
 
-            # create tokenize function
-            def tokenize_function(examples):
-                # extract text
-                text = examples["example"]
+    #         # create tokenize function
+    #         def tokenize_function(examples):
+    #             # extract text
+    #             text = examples["example"]
 
-                #tokenize and truncate text
-                tokenizer.truncation_side = "left"
-                tokenized_inputs = tokenizer(
-                    text,
-                    return_tensors="np",
-                    truncation=True,
-                    max_length=512
-                )
+    #             #tokenize and truncate text
+    #             tokenizer.truncation_side = "left"
+    #             tokenized_inputs = tokenizer(
+    #                 text,
+    #                 return_tensors="np",
+    #                 truncation=True,
+    #                 max_length=512
+    #             )
 
-                return tokenized_inputs
+    #             return tokenized_inputs
 
-            # tokenize training and validation datasets
-            tokenized_data = data.map(tokenize_function, batched=True)
+    #         # tokenize training and validation datasets
+    #         tokenized_data = data.map(tokenize_function, batched=True)
 
-            # setting pad token
-            tokenizer.pad_token = tokenizer.eos_token
-            # data collator
-            data_collator = transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    #         # setting pad token
+    #         tokenizer.pad_token = tokenizer.eos_token
+    #         # data collator
+    #         data_collator = transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False)
 
 
-            # hyperparameters
-            lr = 2e-4
-            batch_size = 4
-            num_epochs = 10
+    #         # hyperparameters
+    #         lr = 2e-4
+    #         batch_size = 4
+    #         num_epochs = 10
 
-            # define training arguments
-            training_args = transformers.TrainingArguments(
-                output_dir= "finetuned_model",
-                learning_rate=lr,
-                per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size,
-                num_train_epochs=num_epochs,
-                weight_decay=0.01,
-                logging_strategy="epoch",
-                evaluation_strategy="epoch",
-                save_strategy="epoch",
-                load_best_model_at_end=True,
-                gradient_accumulation_steps=4,
-                warmup_steps=2,
-                fp16=True,
-                optim="paged_adamw_8bit",
+    #         # define training arguments
+    #         training_args = transformers.TrainingArguments(
+    #             output_dir= "finetuned_model",
+    #             learning_rate=lr,
+    #             per_device_train_batch_size=batch_size,
+    #             per_device_eval_batch_size=batch_size,
+    #             num_train_epochs=num_epochs,
+    #             weight_decay=0.01,
+    #             logging_strategy="epoch",
+    #             evaluation_strategy="epoch",
+    #             save_strategy="epoch",
+    #             load_best_model_at_end=True,
+    #             gradient_accumulation_steps=4,
+    #             warmup_steps=2,
+    #             fp16=True,
+    #             optim="paged_adamw_8bit",
 
-            )
+    #         )
 
-            # configure trainer
-            trainer = transformers.Trainer(
-                model=model,
-                train_dataset=tokenized_data["train"],
-                eval_dataset=tokenized_data["test"],
-                args=training_args,
-                data_collator=data_collator
-            )
+    #         # configure trainer
+    #         trainer = transformers.Trainer(
+    #             model=model,
+    #             train_dataset=tokenized_data["train"],
+    #             eval_dataset=tokenized_data["test"],
+    #             args=training_args,
+    #             data_collator=data_collator
+    #         )
 
-            # train model
-            model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
-            trainer.train()
+    #         # train model
+    #         model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
+    #         trainer.train()
 
-            # renable warnings
-            model.config.use_cache = True
+    #         # renable warnings
+    #         model.config.use_cache = True
 
 
     return stats

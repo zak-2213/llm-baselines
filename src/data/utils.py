@@ -52,11 +52,12 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         seq_length = self.sequence_length
         idx = idx * seq_length
-        x = torch.from_numpy((self.data[idx : idx + seq_length]).astype(np.int64))
-
-        y = torch.from_numpy(
-            (self.data[idx + 1 : idx + 1 + seq_length]).astype(np.int64)
-        )
+        if isinstance(self.data, torch.Tensor):
+            x = self.data[idx : idx + seq_length].to(torch.int64)
+            y = self.data[idx + 1 : idx + 1 + seq_length].to(torch.int64)
+        else:
+            x = torch.from_numpy((self.data[idx : idx + seq_length]).astype(np.int64))
+            y = torch.from_numpy((self.data[idx + 1 : idx + 1 + seq_length]).astype(np.int64))
         return x, y
 
 
@@ -86,6 +87,6 @@ def get_dataloader(data, sequence_length, batch_size, seed=0, distributed_backen
         dataset,
         sampler=sampler,
         batch_size=batch_size,
-        num_workers=4,
+        num_workers=0,
     )
     return loader, sampler
