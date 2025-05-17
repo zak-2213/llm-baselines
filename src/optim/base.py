@@ -55,8 +55,15 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
     # for val data we don't care about epochs? just cycle through (no need to set_epoch to reshuffle)
     data_val_iter = itertools.cycle(data["val"])
 
-    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": []}
-
+    stats = {
+        "train_loss": [],
+        "val_loss": [],
+        "val_pp": [],
+        "val_acc": [],
+        "total_tokens": [],
+        "tokens_per_sec": []
+    }
+   
    
     
     if extra_args.compile:
@@ -110,64 +117,71 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
         itr += 1
 
         if itr % 20 == 0 or itr == iterations: # from here it's only evaluation code, all the training is above
-            if distributed_backend.is_master_process():
-                t1 = time.time()
-                dt = t1 - t0
-                epoch = substep//num_substeps_per_epoch
+            t1 = time.time()
+            dt = t1 - t0
+            epoch = substep//num_substeps_per_epoch
 
-                model.eval()
-                train_loss = loss.detach().cpu().item() * acc_steps
-                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
-                
-                eval_steps = (
-                    24 if itr < iterations else len(data["val"])
+            model.eval()
+            train_loss = loss.detach().cpu().item() * acc_steps
+            stats["train_loss"].append(train_loss)
+            current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
+            
+            eval_steps = (
+                24 if itr < iterations else len(data["val"])
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            if itr % eval_freq:
+                val_acc, val_loss, val_perplexity = eval(
+                    model,
+                    data_val_iter,
+                    extra_args.device,
+                    max_num_batches=eval_steps,
+                    ctx=type_ctx,
                 )
+                current_loss["val"] = val_loss
+                stats["val_loss"].append(val_loss)
+                stats["val_pp"].append(val_perplexity)
+                stats["val_acc"].append(val_acc)
+                print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f} [val] loss={val_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
                 
-                elapsed_time = time.time() - start_time
                 
-                if itr % eval_freq:
-                    val_acc, val_loss, val_perplexity = eval(
-                        model,
-                        data_val_iter,
-                        extra_args.device,
-                        max_num_batches=eval_steps,
-                        ctx=type_ctx,
-                    )
-                    print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f} [val] loss={val_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
-                    
-                    
-                    if extra_args.wandb:
-                        logs = {
-                            "iter": itr,
-                            "train/loss": train_loss,
-                            "val/loss": val_loss,
-                            "val/perplexity": val_perplexity,
-                            "val/acc": val_acc,
-                            "lr": current_lr,
-                        }
+                if extra_args.wandb:
+                    logs = {
+                        "iter": itr,
+                        "train/loss": train_loss,
+                        "val/loss": val_loss,
+                        "val/perplexity": val_perplexity,
+                        "val/acc": val_acc,
+                        "lr": current_lr,
+                    }
     
-                        if itr == iterations:
-                            logs["val/final-ppl"] = val_perplexity
-                            logs["val/final-acc"] = val_acc
-                            logs["val/final-loss"] = val_loss
+                    if itr == iterations:
+                        logs["val/final-ppl"] = val_perplexity
+                        logs["val/final-acc"] = val_acc
+                        logs["val/final-loss"] = val_loss
     
-                        wandb.log(logs)
+                    wandb.log(logs)
     
-                        if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
-                            if text_table is None:
-                                text_table = wandb.Table(columns=["itr", "val-pp", "text"])
+                    if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
+                        if text_table is None:
+                            text_table = wandb.Table(columns=["itr", "val-pp", "text"])
     
-                            out_str = distributed_backend.get_raw_model(model).generate_from_string(
-                                extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
-                            text_table.add_data(itr, val_perplexity, out_str)
-                            # why a copy? see github.com/wandb/wandb/issues/2981
-                            wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
+                        out_str = distributed_backend.get_raw_model(model).generate_from_string(
+                            extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
+                        text_table.add_data(itr, val_perplexity, out_str)
+                        # why a copy? see github.com/wandb/wandb/issues/2981
+                        wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
                 else:
                     print_string = f"Time: {format_elapsed(elapsed_time)} {epoch}/{itr} [train] loss={train_loss:.3f}"
 
                 tokens = 20 * batch_size * sequence_length * acc_steps
-                total_tokens+=tokens
-                print_string += f" [tokens per second] {tokens/dt:.2f} [total tokens] {total_tokens}"
+                total_tokens += tokens
+                tokens_per_sec = tokens/dt
+                stats["total_tokens"].append(total_tokens)
+                stats["tokens_per_sec"].append(tokens_per_sec)
+                print_string += f" [tokens per second] {tokens_per_sec:.2f} [total tokens] {total_tokens}"
                 if scheduler is not None:
                     print_string += f" [lr] {{:.2e}}".format(current_lr)
                 print(print_string)
@@ -198,5 +212,9 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
                         scheduler=scheduler,
                         itr=itr,
                         ckpt_path=ckpt_path)
+    
+    from optim.finetune import run_finetune
+    print("Pretraining complete. Calling finetuning function...")
+    run_finetune(model, checkpoint=ckpt_path)
 
     return stats

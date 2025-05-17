@@ -70,6 +70,12 @@ def run_finetune(model, checkpoint=None):
         else:
             # Model-only checkpoint
             model.load_state_dict(ckpt)
+    base_model = getattr(model, 'base_model', model)
+    print("Text generations")
+    print(base_model.generate_from_string("Solve the following", max_new_tokens=40))
+    print(base_model.generate_from_string("2 + 2 ", max_new_tokens=3))
+    print(base_model.generate_from_string("Hello, I am ", max_new_tokens=40))
+    print(base_model.generate_from_string("John has 10 apples", max_new_tokens=40))
     
     model.train()
     
@@ -109,18 +115,15 @@ def run_finetune(model, checkpoint=None):
                 input_ids = input_ids.unsqueeze(0)
             if labels is not None and labels.dim() == 1:
                 labels = labels.unsqueeze(0)
-            print(f"[DEBUG] Forward pass input shapes - input_ids: {input_ids.shape}, labels: {labels.shape if labels is not None else None}")
-            # Call model with get_logits=True to get both loss and logits
-            out = self.base_model(input_ids, targets=labels, get_logits=True)
+            # Always use get_logits=True to match HF interface expectations
+            out = self.base_model(idx=input_ids, targets=labels, get_logits=True)
             # Restore HF config
             self.base_model.config = self.config
-            # Ensure output matches HF's expected format with required fields
-            result = {
+            # Format output to match HF expectations
+            return {
                 "loss": out["loss"] if "loss" in out else None,
                 "logits": out["logits"] if "logits" in out else None
             }
-            print(f"[DEBUG] Model output - loss: {out.get('loss')}, logits shape: {out['logits'].shape if 'logits' in out else None}")
-            return result
             
         def prepare_inputs_for_generation(self, input_ids, **kwargs):
             return {
@@ -177,6 +180,7 @@ def run_finetune(model, checkpoint=None):
         task_type="CAUSAL_LM"
     )
     
+    # Store original base model
     model = get_peft_model(model, lora_config)
     # model.print_trainable_parameters()
     
@@ -187,7 +191,13 @@ def run_finetune(model, checkpoint=None):
         def on_epoch_end(self, args, state, control, **kwargs):
             model = kwargs["model"]
             device = args.device
-            model.eval()
+            # model.eval()
+            # base_model.load_state_dict(model.state_dict(), strict=False)
+            # print("Text generations")
+            # print(base_model.generate_from_string("Solve the following", max_new_tokens=40))
+            # print(base_model.generate_from_string("2 + 2 ", max_new_tokens=3))
+            # print(base_model.generate_from_string("Hello, I am ", max_new_tokens=40))
+            # print(base_model.generate_from_string("John has 10 apples", max_new_tokens=40))
             sequence_length = args.sequence_length if hasattr(args, "sequence_length") else 1024
             
             # Create validation dataloader
@@ -211,16 +221,12 @@ def run_finetune(model, checkpoint=None):
                     x = x.to(device)
                     y = y.to(device)
                     
-                    print(f"[DEBUG] Evaluation input shapes - x: {x.shape}, y: {y.shape}")
-                    outputs = model(x, targets=y, get_logits=True)
-                    print(f"[DEBUG] Evaluation outputs: {outputs}")
+                    outputs = model(idx=x, targets=y, get_logits=True)
                     val_loss = outputs.get('loss')
-                    print(f"[DEBUG] Extracted val_loss: {val_loss}")
                     if val_loss is not None:
                         loss_list_val.append(val_loss)
-                        if 'logits' in outputs:
+                        if outputs.get('logits') is not None:
                             acc = (outputs['logits'].argmax(-1) == y).float().mean()
-                            print(f"[DEBUG] Calculated accuracy: {acc}")
                             acc_list.append(acc)
 
             if loss_list_val:
@@ -234,6 +240,7 @@ def run_finetune(model, checkpoint=None):
 
             print(f"\n=== Epoch {state.epoch} MathQA Evaluation ===")
             print(f"Validation Loss: {val_loss:.4f} | Perplexity: {perplexity:.2f} | Accuracy: {val_acc:.4f}\n")
+            
             model.train()
             return control
 
