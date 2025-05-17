@@ -7,6 +7,7 @@ from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 import transformers
 import tiktoken
+from src.data.benchmarks import get_mathqa
 
 import torch
 import torch.nn.functional as F
@@ -233,8 +234,7 @@ def train_base(model, opt, data, data_seed, scheduler, iterations, acc_steps, ba
             # trainable parameter count
             model.print_trainable_parameters()
 
-            data = load_dataset("datasets/mathqa")
-
+            data = get_mathqa()
 
             # create tokenize function
             def tokenize_function(examples):
