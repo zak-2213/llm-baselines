@@ -40,9 +40,9 @@ Retained as-is, as it's currently the most optimal for transformer-based LLMs.
 
 ## 📊 Results
 
-- **Validation Accuracy:** `42%`  
-- **Validation Loss:** `3.3`  
-- **Training Time:** `1h 30min`  
+- **Validation Accuracy:** `43%`  
+- **Validation Loss:** `3.169`  
+- **Training Time:** `3 hours` + 10 minutes finetunning
 - (We estimate further improvements if we used the full 4-hour window.)
 
 ---
@@ -87,4 +87,6 @@ Each source was extracted and trained in a specific order to optimize learning p
 
 ## 🧾 Citation
 
-If using this repo for reference or extension, please cite or mention our project and link back.
+On the Role of Corpus Ordering in Language Modeling](https://aclanthology.org/2021.sustainlp-1.15/ (Agrawal et al., sustainlp 2021)
+Hoffmann, Jordan, et al. Training Compute-Optimal Large Language Models. arXiv, 2022. DOI.org (Datacite), https://doi.org/10.48550/ARXIV.2203.15556.
+
