@@ -5,8 +5,11 @@ Large language models can write poems, generate code, and even explain scientifi
 ---
 ## How to Run
 Install requirements:
+
 `pip install -r requirements.txt`
+
 Run training script
+
 `python ./src/main.py`
 
 ## 💡 Our Approach
