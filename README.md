@@ -98,3 +98,7 @@ Each source was extracted and trained in a specific order to optimize learning p
 On the Role of Corpus Ordering in Language Modeling](https://aclanthology.org/2021.sustainlp-1.15/ (Agrawal et al., sustainlp 2021)
 Hoffmann, Jordan, et al. Training Compute-Optimal Large Language Models. arXiv, 2022. DOI.org (Datacite), https://doi.org/10.48550/ARXIV.2203.15556.
 
+Weights pre finetuning: https://drive.google.com/file/d/1fFd0pzpQkpa3zCTMzjyxKNCbJphz7raZ/view?usp=sharing
+
+Presentation: https://docs.google.com/presentation/d/1f7cQKMTs_Ygk1qFWzkKxYjoZ9D0aeIJLc6RpMRsGo4w/edit?usp=sharing
+
