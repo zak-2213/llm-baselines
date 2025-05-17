@@ -28,13 +28,26 @@ class LayerNorm(nn.Module):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 
-class CausalSelfAttention(nn.Module):
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
 
+class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+
+        # Conditionally create c_attn based on whether GQA is used.
+        # If use_gqa is True (or a similar flag in config indicates custom QKV projection),
+        # self.c_attn will not be created, and LlamaAttention will use its own GQA layers.
+        # If use_gqa is False, self.c_attn is created for standard multi-head attention.
+        if not getattr(config, 'use_gqa', False):
+            # key, query, value projections for all heads, but in a batch
+            self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        # Else, if use_gqa is True, self.c_attn is not created here.
+        # LlamaAttention will handle QKV projection with its GQA-specific layers.
+
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
@@ -53,6 +66,18 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # This forward method assumes self.c_attn exists.
+        # If config.use_gqa was True during __init__, self.c_attn would not have been created.
+        # LlamaAttention implements its own forward pass and accesses self.c_attn
+        # only in its non-GQA path (where self.c_attn would exist).
+        # If this CausalSelfAttention class is used standalone and config.use_gqa was True,
+        # calling this forward method would result in an AttributeError.
+        if not hasattr(self, 'c_attn'):
+            raise AttributeError(
+                "self.c_attn was not initialized. This happens if 'use_gqa' was true in config, "
+                "and CausalSelfAttention expects a subclass to handle QKV projection."
+            )
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
