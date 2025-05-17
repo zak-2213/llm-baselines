@@ -109,11 +109,18 @@ def run_finetune(model, checkpoint=None):
                 input_ids = input_ids.unsqueeze(0)
             if labels is not None and labels.dim() == 1:
                 labels = labels.unsqueeze(0)
-            out = self.base_model(input_ids, targets=labels)
+            print(f"[DEBUG] Forward pass input shapes - input_ids: {input_ids.shape}, labels: {labels.shape if labels is not None else None}")
+            # Call model with get_logits=True to get both loss and logits
+            out = self.base_model(input_ids, targets=labels, get_logits=True)
             # Restore HF config
             self.base_model.config = self.config
-            # Ensure output matches HF's expected format
-            return {"loss": out["loss"]} if "loss" in out else out
+            # Ensure output matches HF's expected format with required fields
+            result = {
+                "loss": out["loss"] if "loss" in out else None,
+                "logits": out["logits"] if "logits" in out else None
+            }
+            print(f"[DEBUG] Model output - loss: {out.get('loss')}, logits shape: {out['logits'].shape if 'logits' in out else None}")
+            return result
             
         def prepare_inputs_for_generation(self, input_ids, **kwargs):
             return {
@@ -175,7 +182,7 @@ def run_finetune(model, checkpoint=None):
     
     mathqa_data = get_mathqa(num_proc=1, return_torch=True, pad_to_multiple=1024)
     
-    # (The MathQA evaluation callback remains unchanged.)
+    # MathQA evaluation callback using base.py evaluation logic
     class MathQAEvalCallback(TrainerCallback):
         def on_epoch_end(self, args, state, control, **kwargs):
             model = kwargs["model"]
@@ -183,36 +190,50 @@ def run_finetune(model, checkpoint=None):
             model.eval()
             sequence_length = args.sequence_length if hasattr(args, "sequence_length") else 1024
             
-            # Create our Dataset instance directly
-            val_data = mathqa_data["val"]
-            total_samples = (len(val_data) - 1) // sequence_length
+            # Create validation dataloader
+            val_dataset = Dataset(mathqa_data["val"], sequence_length)
+            eval_loader, _ = get_dataloader(val_dataset, sequence_length, batch_size=args.per_device_eval_batch_size, seed=args.seed)
+            eval_iter = iter(eval_loader)
+
+            # Use base.py evaluation logic
+            loss_list_val, acc_list = [], []
+            eval_steps = 24  # Same as in base.py
             
-            total_loss = 0.0
-            count = 0
             with torch.no_grad():
-                for i in range(0, total_samples, args.per_device_eval_batch_size):
-                    batch_size = min(args.per_device_eval_batch_size, total_samples - i)
-                    batch_losses = []
-                    
-                    for j in range(batch_size):
-                        idx = (i + j) * sequence_length
-                        x = val_data[idx:idx + sequence_length].to(torch.int64).unsqueeze(0).to(device)
-                        y = val_data[idx + 1:idx + 1 + sequence_length].to(torch.int64).unsqueeze(0).to(device)
-                        outputs = model(x, targets=y)
-                        loss = outputs.get('loss')
-                        if loss is not None and not torch.isnan(loss) and not torch.isinf(loss):
-                            batch_losses.append(loss)
-                    
-                    if batch_losses:
-                        batch_loss = torch.stack(batch_losses).mean()
-                        if not torch.isnan(batch_loss) and not torch.isinf(batch_loss):
-                            total_loss += batch_loss.item()
-                            count += 1
+                for _ in range(eval_steps):
+                    try:
+                        batch = next(eval_iter)
+                    except StopIteration:
+                        eval_iter = iter(eval_loader)
+                        batch = next(eval_iter)
                         
-            avg_loss = total_loss / count if count > 0 else float('inf')
-            perplexity = math.exp(avg_loss)
+                    x, y = batch
+                    x = x.to(device)
+                    y = y.to(device)
+                    
+                    print(f"[DEBUG] Evaluation input shapes - x: {x.shape}, y: {y.shape}")
+                    outputs = model(x, targets=y, get_logits=True)
+                    print(f"[DEBUG] Evaluation outputs: {outputs}")
+                    val_loss = outputs.get('loss')
+                    print(f"[DEBUG] Extracted val_loss: {val_loss}")
+                    if val_loss is not None:
+                        loss_list_val.append(val_loss)
+                        if 'logits' in outputs:
+                            acc = (outputs['logits'].argmax(-1) == y).float().mean()
+                            print(f"[DEBUG] Calculated accuracy: {acc}")
+                            acc_list.append(acc)
+
+            if loss_list_val:
+                val_acc = torch.stack(acc_list).mean().item() if acc_list else 0.0
+                val_loss = torch.stack(loss_list_val).mean().item()
+                perplexity = math.exp(val_loss)
+            else:
+                val_acc = 0.0
+                val_loss = float('inf')
+                perplexity = float('inf')
+
             print(f"\n=== Epoch {state.epoch} MathQA Evaluation ===")
-            print(f"Validation Loss: {avg_loss:.4f} | Perplexity: {perplexity:.2f}\n")
+            print(f"Validation Loss: {val_loss:.4f} | Perplexity: {perplexity:.2f} | Accuracy: {val_acc:.4f}\n")
             model.train()
             return control
 

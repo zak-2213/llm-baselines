@@ -93,7 +93,7 @@ def main(args):
         del params_copy['device']
         wandb.init(project=args.wandb_project, name=exp_name, config=params_copy)
     
-    ckpt_path = os.path.join(args.results_base_folder, args.dataset, args.model, exp_name)
+  
     if not os.path.exists(ckpt_path):
         if distributed_backend.is_master_process():
             os.makedirs(ckpt_path)
