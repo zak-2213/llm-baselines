@@ -10,7 +10,7 @@ def none_or_str(value):
 def parse_args(base_parser, args, namespace):
     parser = base_parser
     # General training params
-    parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--batch_size', default=72, type=int)
     parser.add_argument('--acc_steps', default=4, type=int)
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--data_seed', default=1337, type=int)
@@ -25,7 +25,9 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--opt', default='adamw', choices=['adamw', 'sgd'])
     parser.add_argument('--eval_freq', default=200, type=int) # in iterations
     parser.add_argument('--results_base_folder', default="./exps", type=str) 
-    parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1.0 in NanoGPT
+    parser.add_argument('--grad_clip', default=1.0, type=float) # default value is 1.0 in NanoGPT
+    parser.add_argument('--num_key_value_heads', default=2, type=int)
+    parser.add_argument('--use_gqa', default=True, type=bool)
     # Dataset params
     parser.add_argument('--dataset', default='slimpajama', choices=['slimpajama', 'wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2', 'mathqa'])
     parser.add_argument('--vocab_size', default=50304, type=int)
@@ -34,9 +36,9 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument('--model', default='llama2', choices=['base', 'llama2'])
     parser.add_argument('--use_pretrained', default="auto", type=none_or_str) # 'none', 'gpt-2' or a path to the pretraind model
     parser.add_argument('--dropout', default=0.0, type=float)
-    parser.add_argument('--n_head', default=6, type=int)
+    parser.add_argument('--n_head', default=8, type=int)
     parser.add_argument('--n_layer', default=6, type=int) # depths in att + ff blocks
-    parser.add_argument('--n_embd', default=768, type=int) # embedding size / hidden size ... 
+    parser.add_argument('--n_embd', default=1024, type=int) # embedding size / hidden size ... 
     parser.add_argument('--sequence_length', default=1024, type=int)
     parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
     parser.add_argument('--bias', default=False, type=bool)
@@ -57,7 +59,7 @@ def parse_args(base_parser, args, namespace):
     # Distributed args
     parser.add_argument('--distributed_backend', default=None, type=str, required=False,
                         choices=distributed.registered_backends())  # distributed backend type
-    parser.add_argument('--save_checkpoint_freq', default=None, type=int, required=False)
+    parser.add_argument('--save_checkpoint_freq', default=1000, type=int, required=False)
 
     args = parser.parse_args(args, namespace)
 
