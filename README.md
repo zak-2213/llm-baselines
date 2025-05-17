@@ -1,6 +1,6 @@
-# 🧮 MathLLM: A Math-Specialized Language Model from Scratch
+# 🧮 Corpus: A Math-Specialized Language Model from Scratch
 
-Large language models can write poems, generate code, and even explain scientific concepts — but they consistently **struggle with math**. In this hackathon, we set out to tackle that problem by training an LLM from scratch, designed specifically to reason through **math word problems**, with a focus on the [MathQA dataset](https://github.com/xyz/MathQA).
+Large language models can write poems, generate code, and even explain scientific concepts — but they consistently **struggle with math**. In this hackathon, we set out to tackle that problem by training an LLM from scratch, designed specifically to reason through **math word problems**, with a finetunned for the [MathQA dataset].
 
 ---
 
@@ -14,10 +14,6 @@ We combined **data-centric methods**, **training strategies**, and a variety of 
   We organized our data by source, feeding the model progressively more specialized content. We followed insights from the paper _"On the Role of Corpus Ordering in Language Modeling"_ (Portland State University), starting with:
   
 RedPajamaC4 → Wikipedia → GitHub → ArXiv → Books → StackExchange
-
-yaml
-Copy
-Edit
 This aimed to build context early, then gradually shift to more technical math data.
 
 - **Grouped Query Attention (GQA)**  
