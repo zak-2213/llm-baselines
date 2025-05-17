@@ -1,136 +1,100 @@
-# LLM-baselines
+# 🧮 Corpus: A Math-Specialized Language Model from Scratch
 
-A modular codebase to experiment with transformers, inspired by NanoGPT. 
+Large language models can write poems, generate code, and even explain scientific concepts — but they consistently **struggle with math**. In this hackathon, we set out to tackle that problem by training an LLM from scratch, designed specifically to reason through **math word problems**, with a finetunned for the [MathQA dataset].
 
-## Quickstart 
+---
+## How to Run
+Install requirements:
 
-Install dependencies: 
+`pip install -r requirements.txt`
 
-```
-pip install -r requirements.txt
-```
+Run training script
 
-Run a simple training on the Slimpajama dataset ([6B subset](https://huggingface.co/datasets/DKYoon/SlimPajama-6B), 24GBs decompressed, takes a few minutes to download):
+`python ./src/main.py`
 
-```sh
-python ./src/main.py --config_format base
-```
+## 💡 Our Approach
 
-The above command trains a 123.59M parameters model. It trains for 25k iterations with a batch size of 128=32x4 (4 gradient accumulation steps), using a cosine schedule with a maximum learning rate of 1e-3 that is reduced to 1e-4 at the end of training. The model is saved in the `./exps` folder.
+We combined **data-centric methods**, **training strategies**, and a variety of **optimization techniques** to build and accelerate the model. Here's what we explored:
 
-This training takes roughly ~3h on a single A100 (80GB) GPU. The plot of the training and validation loss should look roughly like this:
+### 🧪 Techniques We Tried
 
-<img src="./assets/loss_slimpajama.png" alt="Loss on SlimPajama" width="500"/>
-<img src="./assets/pplx_slimpajama.png" alt="Perplexity on SlimPajama" width="500"/>
+- **Corpus Ordering / Curriculum Training**  
+  We organized our data by source, feeding the model progressively more specialized content. We followed insights from the paper _"On the Role of Corpus Ordering in Language Modeling"_ (Portland State University), starting with:
+  
+RedPajamaC4 → Wikipedia → GitHub → ArXiv → Books → StackExchange
+This aimed to build context early, then gradually shift to more technical math data.
 
-You can check out the wandb run for yourself [here](https://wandb.ai/haeggee/llm-lauzhack/runs/lm2obqy9?nw=nwuserhaeggee).
+- **Grouped Query Attention (GQA)**  
+Implemented to improve attention efficiency with reduced compute, inspired by optimizations in models like LLaMA 2.
 
+- **Quantization (int8)**  
+Drastically improved training speed (~200K tokens/sec), but hurt model accuracy — so we dropped it after testing.
 
-## Less quick start
+- **`torch.compile`**  
+Promising in theory, but caused CUDA compatibility issues during training, so we reverted.
 
-Here are the possible parameters you can use (copypasted from `config/base.py`):
+- **Rotary Positional Embeddings (RoPE) with Complex Numbers**  
+We experimented with using complex numbers directly instead of sine/cosine for the rotary embeddings, while maintaining the RoPE mechanism.
 
-```python
-# General training params
-parser.add_argument('--batch_size', default=32, type=int)
-parser.add_argument('--acc_steps', default=4, type=int)
-parser.add_argument('--seed', default=0, type=int) # random seed for the parameters
-parser.add_argument('--data_seed', default=1337, type=int) # random seed defining the data ordering
-parser.add_argument('--device', default='cuda:0', type=str) # see below to run on multiple GPUs
-parser.add_argument('--iterations', default=25000, type=int) # total number of training iterations
-parser.add_argument('--lr', default=1e-3, type=float) 
-parser.add_argument('--warmup_percent', default=0.05, type=float) # the total number of warmup steps is iterations * warmup_percent
-parser.add_argument('--weight_decay', default=0.1, type=float) # I recommend you keep this value, else instabilities might arise
-parser.add_argument('--beta1', default=0.9, type=float) # adam parameter
-parser.add_argument('--beta2', default=0.95, type=float) # adam parameter
-parser.add_argument('--scheduler', default='cos', choices=['linear', 'cos', 'none'])
-parser.add_argument('--opt', default='adamw', choices=['adamw', 'sgd'])
-parser.add_argument('--eval_freq', default=200, type=int) # in iterations
-parser.add_argument('--results_base_folder', default="./exps", type=str) # where the checkpoints will be saved
-parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1.0 in NanoGPT
-# Dataset params
-parser.add_argument('--dataset', default='slimpajama', choices=['slimpajama', 'wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2'])
-parser.add_argument('--vocab_size', default=50304, type=int)
-parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, you most likely do not need this  
-# Model params
-parser.add_argument('--model', default='base', choices=['base', 'llama2'])
-parser.add_argument('--use_pretrained', default="none", type=str) # 'none', 'gpt-2' or a path to the pretraind model
-parser.add_argument('--dropout', default=0.0, type=float) # keep to 0 unless in low data regime (e.g. wikitext)
-parser.add_argument('--n_head', default=12, type=int)
-parser.add_argument('--n_layer', default=12, type=int) # depth in (att + ff) blocks
-parser.add_argument('--n_embd', default=768, type=int) # hidden size ... 
-parser.add_argument('--sequence_length', default=512, type=int)
-parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
-parser.add_argument('--bias', default=False, type=bool)
-parser.add_argument('--compile', action='store_true') # if true then model is compiled 
-parser.add_argument('--rmsnorm_eps', default=1e-5, type=float) # used by the llama model
-parser.add_argument('--multiple_of', default=256, type=int) # used by the llama model make SwiGLU hidden layer size multiple of large power of 2
-# logging params (WandB)
-parser.add_argument('--wandb', action='store_true') # whether to use wandb or not
-parser.add_argument('--wandb_project', default="my-project", type=str)
-parser.add_argument('--wandb_run_prefix', default="none", type=str) # is added before the autogenerated experiment name
-parser.add_argument('--eval_seq_prefix', default="Once upon a time", type=str) # prefix used to generate sequences
-# Distributed args
-parser.add_argument('--distributed_backend', default=None, type=str, required=False,
-                    choices=distributed.registered_backends())  # distributed backend type (e.g. nccl)
-parser.add_argument('--save_checkpoint_freq', default=None, type=int, required=False)
-```
+- **Activation Function: SwiGLU**  
+Retained as-is, as it's currently the most optimal for transformer-based LLMs.
 
-## Using WandB
+- **Training Strategy**  
+- 80% full training on a mixed dataset  
+- 20% fine-tuning on MathQA  
+- We avoided repeating the MathQA dataset unnecessarily due to its limited size.
 
-You need to give your wandb authorize key in order to send the data to your wandb account. If you start jobs on a server without access to prompt, then you can set the `WANDB_API_KEY` variable within your script:
+---
 
-```bash
-# this is a script that could be executed on a server
-pip install -r requirements.txt # install req.
-export WANDB_API_KEY="put your authorize key here, to find it: https://wandb.ai/authorize"
-python ./src/main.py --config_format base --wandb --wandb_project "my awesome project" --n_layer 7 --model base --seed 123
-```
+## 📊 Results
 
-## How to add your own transformer architecture? 
+- **Validation Accuracy:** `43%`  
+- **Validation Loss:** `3.169`  
+- **Training Time:** `3 hours` + 30 minutes finetuning
+- (We estimate further improvements if we used the full 4-hour window.)
 
-The structure of the project is the following: 
+---
 
-```sh
-src/
-    main.py         # pick the right data, model, and training function
-    config/
-        __init__.py # contains CONFIG_FORMAT_TO_MODULE_MAP mapping the name given to the --config_format flag with a python conf file
-        base.py     # config for the base model
-    data/
-        utils.py    # contains the get_dataset function
-        wikitext.py # load/process wikitext
-        arxiv.py    # load/process arxiv
-        shakespeare.py # load/process the Shakespeare dataset
-        slimpajama.py
-        ...
-    models/
-        utils.py    # contains the get_model function
-        base.py     # contains the standard transformer base architecture
-        llama.py    # llama architecture
-    optim/
-        utils.py    # contains eval and get_batch functions
-        base.py     # training function for the base and llama models
-    distributed/
-        # code to enable simple distributed training
-```
+## 🧱 Dataset Used
 
-Given the above structure, to add your own model, you can just fork the `./src/models/base.py` file, do your modifications, then if necessary fork the `./src/optim/base.py` in case you need some custom training loop or evaluation. You also need to fork the `./src/config/base.py` file to add your own parameters, which imply adding your new config to the mapping `CONFIG_FORMAT_TO_MODULE_MAP` in `./src/config/__init__.py`. To add a new dataset, create a new file in the `data` folder, check `wikitext.py` for the expected format. 
+We used a structured subset of the [SlimPajama dataset](https://huggingface.co/datasets/cerebras/SlimPajama-627B), leveraging its `meta` column to sort sources:
 
-## Multi-GPU training
+- `"RedPajamaC4"`
+- `"Wikipedia"`
+- `"Github"`
+- `"ArXiv"`
+- `"Book"`
+- `"StackExchange"`
 
-Given a multi-GPU machine with e.g. 4 GPUs, one can distribute the training using data-parallelism:
+Each source was extracted and trained in a specific order to optimize learning progression.
 
-```sh
-torchrun --nproc_per_node=4 ./src/main.py --config_format base --distributed_backend nccl --dataset slimpajama --model base
-```
+---
 
-When using multiple GPUs, the data will be distributed among the GPUs by dividing the number of accumulation steps by the number of nodes. For instance if we train with a batch size of 32 and 4 accumulation steps, then each GPU will process batches of 32 elements and do 1 accumulation steps. For this reason we require `acc_steps` to be a multiple of the number of GPUs.    
+## 🚧 Limitations & Lessons Learned
 
+- Some optimization techniques (like quantization and `torch.compile`) were dropped due to tradeoffs or compatibility.
+- Data quality and ordering played a **bigger role** than anticipated.
+- Accuracy is promising given the short training window, but extended training could yield better results.
 
-## Experimenting locally on your device with CPU
-If do not have access to a GPU or just want to try the code locally on your device, you can try the Shakespeare dataset with character-level tokens:
+---
 
-```sh
-python ./src/main.py --n_layer=2 --n_head=4 --n_embd=128 --sequence_length=256 --dataset=shakespeare-char --device=cpu --vocab_size=96
-```
+## 🚀 Next Steps
+
+- Try longer training on full datasets
+- Explore LoRA or QLoRA for fine-tuning
+- Refine positional embedding logic
+- Expand to symbolic reasoning tasks beyond MathQA
+
+---
+
+## 🧠 Contributors
+
+- `Your Team Name / Members`
+
+---
+
+## 🧾 Citation
+
+On the Role of Corpus Ordering in Language Modeling](https://aclanthology.org/2021.sustainlp-1.15/ (Agrawal et al., sustainlp 2021)
+Hoffmann, Jordan, et al. Training Compute-Optimal Large Language Models. arXiv, 2022. DOI.org (Datacite), https://doi.org/10.48550/ARXIV.2203.15556.
+
