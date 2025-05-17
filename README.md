@@ -3,6 +3,11 @@
 Large language models can write poems, generate code, and even explain scientific concepts — but they consistently **struggle with math**. In this hackathon, we set out to tackle that problem by training an LLM from scratch, designed specifically to reason through **math word problems**, with a finetunned for the [MathQA dataset].
 
 ---
+## How to Run
+Install requirements:
+`pip install -r requirements.txt`
+Run training script
+`python ./src/main.py`
 
 ## 💡 Our Approach
 
@@ -42,7 +47,7 @@ Retained as-is, as it's currently the most optimal for transformer-based LLMs.
 
 - **Validation Accuracy:** `43%`  
 - **Validation Loss:** `3.169`  
-- **Training Time:** `3 hours` + 10 minutes finetunning
+- **Training Time:** `3 hours` + 10 minutes finetuning
 - (We estimate further improvements if we used the full 4-hour window.)
 
 ---
