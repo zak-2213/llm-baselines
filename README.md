@@ -87,12 +87,6 @@ Each source was extracted and trained in a specific order to optimize learning p
 
 ---
 
-## 🧠 Contributors
-
-- `Your Team Name / Members`
-
----
-
 ## 🧾 Citation
 
 On the Role of Corpus Ordering in Language Modeling](https://aclanthology.org/2021.sustainlp-1.15/ (Agrawal et al., sustainlp 2021)
