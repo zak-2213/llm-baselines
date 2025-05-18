@@ -48,9 +48,9 @@ Retained as-is, as it's currently the most optimal for transformer-based LLMs.
 
 ## 📊 Results
 
-- **Validation Accuracy:** `43%`  
-- **Validation Loss:** `3.169`  
-- **Training Time:** `3 hours` + 30 minutes finetuning
+- **Best Validation Accuracy Achieved:** `43.8375%`  
+- **Validation Loss:** `3.115`  
+- **Pre-Training Time:** `3 hours`
 - (We estimate further improvements if we used the full 4-hour window.)
 
 ---
